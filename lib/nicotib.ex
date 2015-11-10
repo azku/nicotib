@@ -11,6 +11,6 @@ defmodule Nicotib do
 		:ok = :filelib.ensure_dir(storage_path)
     :file.make_dir(storage_path)
 		Supervisor.start_child(Nicotib.Supervisor, Supervisor.Spec.worker(Nicotib.Addresses, [storage_path]))
-		Supervisor.start_child(Nicotib.Supervisor, Supervisor.Spec.supervisor(Nicotib.NetworkSupervisor, [network_callback, Nicotib.Addresses]))
+		Supervisor.start_child(Nicotib.Supervisor, Supervisor.Spec.supervisor(Nicotib.NetworkSupervisor, [Nicotib.NetworkCallback, Nicotib.Addresses]))
 	end
 end
