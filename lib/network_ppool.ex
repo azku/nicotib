@@ -90,7 +90,7 @@ defmodule Nicotib.NetworkPpool do
 		open_new_client_con(1, f_handshake)
 		{:noreply, %{state | :client_lst => List.keydelete(c_lst, pid, 1)} }
 	end
-	def handle_info(msg, state) do
+	def handle_info(_msg, state) do
 		{:noreply, state}
 	end
 end

@@ -2,7 +2,19 @@ defmodule Nicotib.Protocol do
 	require Nicotib.Configuration
 	alias Nicotib.Configuration, as: C
 
-	def check_message_validity(C.msg_header(_, _, pl_checksum, pl)) do
+	defmacrop inv_vector_decoding(command, payload) do
+		quote do
+			{count,_ , b_inv_vector} = variable_length_integer(unquote(payload))
+			inv_vector = for << type :: binary - size(4), hash :: binary - size(32) <- b_inv_vector>> do
+																																		 %{type: :binary.decode_unsigned(type, :little),
+																																			 hash: hash}
+			end
+			true = count == length(inv_vector)
+			%{command: unquote(command), inv_vect: inv_vector}
+		end
+	end
+	
+	def check_message_validity(C.msg_header( _, pl_checksum, pl)) do
 		<< calculated_checksum :: binary - size(4), _ :: binary >> = :crypto.hash(:sha256, :crypto.hash(:sha256, pl))
 		pl_checksum == calculated_checksum
 	end
@@ -44,7 +56,7 @@ defmodule Nicotib.Protocol do
     b2
 	end
 
-	def decode_msg(C.msg_version_header(_, _, version, network, timestamp, addr1, addr2, nonce, rest)) do
+	def decode_msg(C.msg_header(:version, _, _, C.version_payload(version, network, timestamp, addr1, addr2, nonce, rest))) do
 		{_, ua, <<last_block :: binary - size(4), relay>>} = variable_length_string(rest)
 		%{command: :version, version: :binary.decode_unsigned(version, :little),
 		  network: <<network :: binary>>, nonce: nonce,
@@ -52,20 +64,33 @@ defmodule Nicotib.Protocol do
       addr1:  addr1, addr2: addr2, user_agent: ua,
       last_block:  :binary.decode_unsigned(last_block, :little), relay: relay}
 	end
-	def decode_msg(C.msg_verack_header(_, _)) do
+	def decode_msg(C.msg_header(:verack, _, _, _)) do
 		%{ command: :verack}
 	end
+	def decode_msg(C.msg_header(:inv, _, _, payload)) do
+		inv_vector_decoding(:inv, payload)
+	end
+	def decode_msg(C.msg_header(:getdata, _, _, payload)) do
+		inv_vector_decoding(:getdata, payload)
+	end
 
+	def encode_msg(m =%{:addr1 => {p3, p2, p1, p0}}) do
+		encode_msg(%{m | :addr1 => << C.encpadl(C.node_network,8) :: binary,0 :: size(80), 255, 255, p3,p2,p1,p0,C.encpadb(C.port,2) :: binary>>})
+	end
+	def encode_msg(m =%{:addr2 => {p3, p2, p1, p0}}) do
+		encode_msg(%{m | :addr2 => << C.encpadl(C.node_network,8) :: binary,0 :: size(80), 255, 255, p3,p2,p1,p0,C.encpadb(C.port,2) :: binary>>})
+	end
 	def encode_msg(%{:command => :version, :version => version, :network => network, :timestamp => timestamp,
 									 :addr1 => addr1, :addr2 => addr2, :nonce => nonce, :user_agent =>  ua, :last_block => lb,
 									 :relay => rl}) do
 		{b_length, b_checksum} = length_and_checksum([C.encpadl(version, 4), network,C.encpadl(timestamp, 8),
 																									addr1, addr2, nonce, string_to_variable_length(ua),
 																									C.encpadl(lb, 4),rl])
-		C.msg_version_header(b_length, b_checksum,
-												 C.encpadl(version, 4), network,C.encpadl(timestamp, 8),
-												 addr1, addr2, nonce,
-												 <<string_to_variable_length(ua) :: binary, C.encpadl(lb, 4) :: binary, rl ::binary >>)
+		C.msg_header(:version,b_length, b_checksum,
+								 C.version_payload(
+									 C.encpadl(version, 4), network,C.encpadl(timestamp, 8),
+									 addr1, addr2, nonce,
+									 <<string_to_variable_length(ua) :: binary, C.encpadl(lb, 4) :: binary, rl ::binary >>))
 	end
 	def encode_msg(%{:command => :verack}) do
 		{b_length, b_checksum} = length_and_checksum([<<>>])
@@ -80,17 +105,13 @@ defmodule Nicotib.Protocol do
 	end
 
 
-
-
-	
-
 	def variable_length_string(b) do
 		{n, h, t} = variable_length_integer(b)
 		<< var_string :: binary - size(n), rest :: binary >> = t
 		{h, var_string, rest}
 	end
 	def string_to_variable_length(s) when is_binary(s) do
-    :erlang.list_to_binary([integer_to_variable_length(:erlang.byte_size(s)), s])
+    :erlang.list_to_binary([integer_to_variable_length(byte_size(s)), s])
 	end
 	def	string_to_variable_length(s) when is_list(s) do
     :erlang.list_to_binary([integer_to_variable_length(length(s)), s])
@@ -127,6 +148,5 @@ defmodule Nicotib.Protocol do
 	def integer_to_variable_length(i) when i<18446744073709551616 do
     b = C.encpadl(i, 8)
     <<255, b :: binary>>
-	end
-		
+	end		
 end

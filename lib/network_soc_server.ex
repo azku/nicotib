@@ -98,7 +98,7 @@ defmodule Nicotib.NetworkSocServer do
 		:ok
 	end
 
-	def consume_stream(m = C.msg_header(_, b_payload_length, _, payload) , state) do
+	def consume_stream(m = C.msg_header(b_payload_length, _, payload) , state) do
 		payload_length = :binary.decode_unsigned(b_payload_length, :little)
 		case (byte_size(payload) - payload_length) do
 			0 -> {:noreply, handle_message(m, %{ state | :stream => <<>>}), 60 * 1000 * 2}
