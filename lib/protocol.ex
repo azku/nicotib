@@ -13,6 +13,12 @@ defmodule Nicotib.Protocol do
 			%{command: unquote(command), inv_vect: inv_vector}
 		end
 	end
+	defmacro inv_vector_encoding(inv_vect) do
+		quote do
+			:erlang.list_to_binary([integer_to_variable_length(length(unquote(inv_vect))),
+														 (for %{:type => type, :hash => hash} <- unquote(inv_vect), do: [C.encpadl(type, 4), hash])])
+		end
+	end
 	
 	def check_message_validity(C.msg_header( _, pl_checksum, pl)) do
 		<< calculated_checksum :: binary - size(4), _ :: binary >> = :crypto.hash(:sha256, :crypto.hash(:sha256, pl))
@@ -62,7 +68,7 @@ defmodule Nicotib.Protocol do
 		  network: <<network :: binary>>, nonce: nonce,
       timestamp:  :binary.decode_unsigned(timestamp, :little),
       addr1:  addr1, addr2: addr2, user_agent: ua,
-      last_block:  :binary.decode_unsigned(last_block, :little), relay: relay}
+      last_block:  :binary.decode_unsigned(last_block, :little), relay: <<relay>>}
 	end
 	def decode_msg(C.msg_header(:verack, _, _, _)) do
 		%{ command: :verack}
@@ -72,6 +78,18 @@ defmodule Nicotib.Protocol do
 	end
 	def decode_msg(C.msg_header(:getdata, _, _, payload)) do
 		inv_vector_decoding(:getdata, payload)
+	end
+	def decode_msg(C.msg_header(:notfound, _, _, payload)) do
+		inv_vector_decoding(:notfound, payload)
+	end
+	def decode_msg(C.msg_header(:getblocks, _, _, payload)) do
+		<<version :: binary - size(4), rest :: binary>> = payload
+		{hash_count, _, b_hashes} = variable_length_integer(rest)
+		b_cocator_bytes = hash_count * 32
+		<< b_block_locators :: binary - size(b_cocator_bytes), hash_stop :: binary - size(32)>> = b_hashes
+		block_locators = for  <<h :: binary - size(32) <- b_block_locators>>, do: h
+	  %{command: :getblocks, version: :binary.decode_unsigned(version, :little), lst_blocklocator: block_locators,
+			hashstop: hash_stop}
 	end
 
 	def encode_msg(m =%{:addr1 => {p3, p2, p1, p0}}) do
@@ -94,7 +112,28 @@ defmodule Nicotib.Protocol do
 	end
 	def encode_msg(%{:command => :verack}) do
 		{b_length, b_checksum} = length_and_checksum([<<>>])
-		C.msg_verack_header(b_length, b_checksum)
+		C.msg_header(:verack, b_length, b_checksum, <<>>)
+	end
+	def encode_msg(%{:command => :inv, :inv_vect => inv_vect}) do
+		payload = inv_vector_encoding(inv_vect)
+		{b_length, b_checksum} = length_and_checksum([payload])
+		C.msg_header(:inv, b_length, b_checksum, payload)
+	end
+	def encode_msg(%{:command => :getdata, :inv_vect => inv_vect}) do
+		payload = inv_vector_encoding(inv_vect)
+		{b_length, b_checksum} = length_and_checksum([payload])
+		C.msg_header(:getdata, b_length, b_checksum, payload)
+	end
+	def encode_msg(%{:command => :notfound, :inv_vect => inv_vect}) do
+		payload = inv_vector_encoding(inv_vect)
+		{b_length, b_checksum} = length_and_checksum([payload])
+		C.msg_header(:notfound, b_length, b_checksum, payload)
+	end
+	def encode_msg(%{:command => :getblocks, :version => version, :lst_blocklocator => lst_block, :hashstop => hash_stop}) do
+		payload = :erlang.list_to_binary([C.encpadl(version, 4), integer_to_variable_length(length(lst_block)),
+																			lst_block, hash_stop])
+		{b_length, b_checksum} = length_and_checksum([payload])
+		C.msg_header(:getblocks, b_length, b_checksum, payload)
 	end
 
 	def length_and_checksum(lst) do

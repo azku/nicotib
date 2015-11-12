@@ -43,34 +43,38 @@ defmodule NicotibTest do
 	end
 
 	test "Test version decoding" do
-		assert %{addr1: <<1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0>>,
-             addr2: <<1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 79, 154, 134, 142, 32, 141>>,
-             command: :version, last_block: 142109,
-             network: <<1, 0, 0, 0, 0, 0, 0, 0>>,
-             nonce: <<118, 220, 131, 138, 44, 30, 217, 249>>, relay: 1,
-             timestamp: 1398070797, user_agent: "/Satoshi:0.9.1/",
-             version: 70002} ==
-			Nicotib.Protocol.decode_msg(<<249,190,180,217,118,101,114,115,105,111,110,0,0,0,0,0,101,0,
-																	0,0,186,233,140,168,114,17,1,0,1,0,0,0,0,0,0,0,13,222,84,83,
-																	0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,0,0,0,0,
-																	0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,79,154,134,
-																	142,32,141,118,220,131,138,44,30,217,249,15,47,83,97,116,111,
-																	115,104,105,58,48,46,57,46,49,47,29,43,2,0,1>>)
 		m = <<249,190,180,217,118,101,114,115,105,111,110,0,0,0,0,0,101,0,
 		0,0,186,233,140,168,114,17,1,0,1,0,0,0,0,0,0,0,13,222,84,83,
 		0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,0,0,0,0,
 		0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,79,154,134,
 		142,32,141,118,220,131,138,44,30,217,249,15,47,83,97,116,111,
 		115,104,105,58,48,46,57,46,49,47,29,43,2,0,1>>
-		assert m ==Nicotib.Protocol.encode_msg(Nicotib.Protocol.decode_msg(m))
+		assert m == Nicotib.Protocol.encode_msg(Nicotib.Protocol.decode_msg(m))
 	end
 	test "verack decoding" do
-		assert %{command: :verack} == Nicotib.Protocol.decode_msg(<<249,190,180,217,118,101,114,97,99,107,0,0,0,0,0,0,1,2,3,4,1,2,3,4>>)
+		d_m = %{command: :verack}
+		assert  d_m == Nicotib.Protocol.decode_msg(Nicotib.Protocol.encode_msg(d_m))
 	end
+	
 	test "inv decoding" do
-		assert %{command: :inv, inv_vect: []} == Nicotib.Protocol.decode_msg(<< 249,190,180,217,105,110,118,0,0,0,0,0,0,0,0,0,1,2,3,4,1,2,3,4,0>>)
+		m1 = << 249,190,180,217,105,110,118,0,0,0,0,0,0,0,0,0,1,0,0,0,20,6,224,88,0>>
+		d_m1 = %{command: :inv, inv_vect: []}
+		assert m1 == Nicotib.Protocol.encode_msg(Nicotib.Protocol.decode_msg(m1))
+		assert  d_m1 == Nicotib.Protocol.decode_msg(Nicotib.Protocol.encode_msg(d_m1))
+		
 	end
+	@tag mustexec: true
 	test "getdata decoding" do
-		assert %{command: :getdata, inv_vect: []} == Nicotib.Protocol.decode_msg(<< 249,190,180,217,103,101,116,100,97,116,97,0,0,0,0,0,1,2,3,4,1,2,3,4,0>>)
+		m1 = <<249, 190, 180, 217, 103, 101, 116, 100, 97, 116, 97, 0, 0, 0, 0, 0, 1, 0, 0, 0, 20, 6, 224, 88, 0>>
+		d_m1 = %{command: :getdata, inv_vect: []}
+		assert m1 == Nicotib.Protocol.encode_msg(Nicotib.Protocol.decode_msg(m1))
+		assert  d_m1 == Nicotib.Protocol.decode_msg(Nicotib.Protocol.encode_msg(d_m1))
+	end
+	@tag mustexec: true
+	test "notfound decoding" do
+		m1 = <<249, 190, 180, 217, 110,111,116,102,111,117,110,100,0,0,0,0, 1, 0, 0, 0, 20, 6, 224, 88, 0>>
+		d_m1 = %{command: :getdata, inv_vect: []}
+		assert m1 == Nicotib.Protocol.encode_msg(Nicotib.Protocol.decode_msg(m1))
+		assert  d_m1 == Nicotib.Protocol.decode_msg(Nicotib.Protocol.encode_msg(d_m1))
 	end
 end
