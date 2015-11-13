@@ -1,6 +1,9 @@
 defmodule Nicotib.Protocol do
 	require Nicotib.Configuration
 	alias Nicotib.Configuration, as: C
+	@doc ~S"""
+	Provides access to and from bitcoin protocol binaries
+"""
 
 	defmacrop inv_vector_decoding(command, payload) do
 		quote do
@@ -13,7 +16,13 @@ defmodule Nicotib.Protocol do
 			%{command: unquote(command), inv_vect: inv_vector}
 		end
 	end
-	defmacro inv_vector_encoding(inv_vect) do
+	defmacrop wrap_header(command, payload) do
+		quote do
+			{b_length, b_checksum} = length_and_checksum([unquote(payload)])
+			C.msg_header(unquote(command), b_length, b_checksum, unquote(payload))
+		end
+	end
+	defmacrop inv_vector_encoding(inv_vect) do
 		quote do
 			:erlang.list_to_binary([integer_to_variable_length(length(unquote(inv_vect))),
 														 (for %{:type => type, :hash => hash} <- unquote(inv_vect), do: [C.encpadl(type, 4), hash])])
@@ -63,33 +72,37 @@ defmodule Nicotib.Protocol do
 	end
 
 	def decode_msg(C.msg_header(:version, _, _, C.version_payload(version, network, timestamp, addr1, addr2, nonce, rest))) do
-		{_, ua, <<last_block :: binary - size(4), relay>>} = variable_length_string(rest)
+		{_, ua, <<last_block :: binary - size(4), relay :: binary>>} = variable_length_string(rest)
 		%{command: :version, version: :binary.decode_unsigned(version, :little),
 		  network: <<network :: binary>>, nonce: nonce,
       timestamp:  :binary.decode_unsigned(timestamp, :little),
       addr1:  addr1, addr2: addr2, user_agent: ua,
-      last_block:  :binary.decode_unsigned(last_block, :little), relay: <<relay>>}
+      last_block:  :binary.decode_unsigned(last_block, :little), relay: <<relay :: binary>>}
 	end
-	def decode_msg(C.msg_header(:verack, _, _, _)) do
-		%{ command: :verack}
+	def decode_msg(C.msg_header(:verack, _, _, _)), do:		%{ command: :verack}
+	def decode_msg(C.msg_header(:inv, _, _, payload)), do:	inv_vector_decoding(:inv, payload)
+	def decode_msg(C.msg_header(:getdata, _, _, payload)), do:	inv_vector_decoding(:getdata, payload)
+	def decode_msg(C.msg_header(:notfound, _, _, payload)), do:	inv_vector_decoding(:notfound, payload)
+	def decode_msg(C.msg_header(:getblocks, _, _, payload)), do:	decode_getheaders_or_blocks(:getblocks, payload)
+	def decode_msg(C.msg_header(:getheaders, _, _, payload)), do:	decode_getheaders_or_blocks(:getheaders, payload)
+	#def decode_msg(C.msg_header(:tx, _, _, payload)), do: decode_tx(payload)
+	#def decode_msg(C.msg_header(:block, _, _, payload)), do: decode_block(payload)
+	def decode_msg(C.msg_header(:getaddr, _, _, _)), do:		%{ command: :getaddr}
+	def decode_msg(C.msg_header(:ping, _, _, payload)), do:		%{ command: :ping, nonce: payload}
+	def decode_msg(C.msg_header(:pong, _, _, payload)), do:		%{ command: :pong, nonce: payload}
+	def decode_msg(C.msg_header(:mempool, _, _, <<>>)), do:		%{ command: :mempool}
+	def decode_msg(C.msg_header(:reject, _, _, payload)) do
+		{command_length, _, b_command} = variable_length_integer(payload)
+		<<command :: binary - size(command_length), code :: binary - size(1), b_reason :: binary>> = b_command
+		{reason_length, _, b_reason} = variable_length_integer(b_reason)
+		<<reason :: binary - size(reason_length), extra :: binary>> = b_reason
+		%{command: :reject, rejected_command: command, code: code, reason: reason, extra: extra}
 	end
-	def decode_msg(C.msg_header(:inv, _, _, payload)) do
-		inv_vector_decoding(:inv, payload)
-	end
-	def decode_msg(C.msg_header(:getdata, _, _, payload)) do
-		inv_vector_decoding(:getdata, payload)
-	end
-	def decode_msg(C.msg_header(:notfound, _, _, payload)) do
-		inv_vector_decoding(:notfound, payload)
-	end
-	def decode_msg(C.msg_header(:getblocks, _, _, payload)) do
-		<<version :: binary - size(4), rest :: binary>> = payload
-		{hash_count, _, b_hashes} = variable_length_integer(rest)
-		b_cocator_bytes = hash_count * 32
-		<< b_block_locators :: binary - size(b_cocator_bytes), hash_stop :: binary - size(32)>> = b_hashes
-		block_locators = for  <<h :: binary - size(32) <- b_block_locators>>, do: h
-	  %{command: :getblocks, version: :binary.decode_unsigned(version, :little), lst_blocklocator: block_locators,
-			hashstop: hash_stop}
+	def decode_msg(C.msg_header(:filterload, _, _, payload)) do
+		filter = :binary.part(payload, 0, byte_size(payload) - 1 - 4 - 4)
+		<<n_hash_funcs :: binary - size(4), n_tweak :: binary - size(4), n_flash :: binary - size(1) >> = :binary.part(payload, byte_size(payload), -9)
+		%{command: :filterload, n_hash_funcs: :binary.decode_unsigned(n_hash_funcs, :little), n_tweak: :binary.decode_unsigned(n_tweak, :little),
+		 filter: filter, n_flash: :binary.decode_unsigned(n_flash, :little)}
 	end
 
 	def encode_msg(m =%{:addr1 => {p3, p2, p1, p0}}) do
@@ -110,32 +123,37 @@ defmodule Nicotib.Protocol do
 									 addr1, addr2, nonce,
 									 <<string_to_variable_length(ua) :: binary, C.encpadl(lb, 4) :: binary, rl ::binary >>))
 	end
-	def encode_msg(%{:command => :verack}) do
-		{b_length, b_checksum} = length_and_checksum([<<>>])
-		C.msg_header(:verack, b_length, b_checksum, <<>>)
-	end
-	def encode_msg(%{:command => :inv, :inv_vect => inv_vect}) do
-		payload = inv_vector_encoding(inv_vect)
-		{b_length, b_checksum} = length_and_checksum([payload])
-		C.msg_header(:inv, b_length, b_checksum, payload)
-	end
-	def encode_msg(%{:command => :getdata, :inv_vect => inv_vect}) do
-		payload = inv_vector_encoding(inv_vect)
-		{b_length, b_checksum} = length_and_checksum([payload])
-		C.msg_header(:getdata, b_length, b_checksum, payload)
-	end
-	def encode_msg(%{:command => :notfound, :inv_vect => inv_vect}) do
-		payload = inv_vector_encoding(inv_vect)
-		{b_length, b_checksum} = length_and_checksum([payload])
-		C.msg_header(:notfound, b_length, b_checksum, payload)
-	end
+	def encode_msg(%{:command => :verack}), do: 		wrap_header(:verack, <<>>)
+	def encode_msg(%{:command => :inv, :inv_vect => inv_vect}), do: wrap_header(:inv, inv_vector_encoding(inv_vect))
+	def encode_msg(%{:command => :getdata, :inv_vect => inv_vect}), do: wrap_header(:getdata, inv_vector_encoding(inv_vect))
+	def encode_msg(%{:command => :notfound, :inv_vect => inv_vect}), do: wrap_header(:notfound, inv_vector_encoding(inv_vect))
+	def encode_msg(%{:command => :ping, :nonce => nonce}), do: wrap_header(:ping, nonce)
+	def encode_msg(%{:command => :pong, :nonce => nonce}), do: wrap_header(:pong, nonce)
+	def encode_msg(%{:command => :getaddr}), do: wrap_header(:getaddr, <<>>)
+	def encode_msg(%{:command => :mempool}), do: wrap_header(:mempool, <<>>)
 	def encode_msg(%{:command => :getblocks, :version => version, :lst_blocklocator => lst_block, :hashstop => hash_stop}) do
 		payload = :erlang.list_to_binary([C.encpadl(version, 4), integer_to_variable_length(length(lst_block)),
 																			lst_block, hash_stop])
-		{b_length, b_checksum} = length_and_checksum([payload])
-		C.msg_header(:getblocks, b_length, b_checksum, payload)
+		wrap_header(:getblocks, payload)
 	end
-
+	def encode_msg(%{:command => :getheaders, :version => version, :lst_blocklocator => lst_block, :hashstop => hash_stop}) do
+		payload = :erlang.list_to_binary([C.encpadl(version, 4), integer_to_variable_length(length(lst_block)),
+																			lst_block, hash_stop])
+		wrap_header(:getheaders, payload)
+	end
+	#def encode_msg(%{:command => :reject, rejected_command: command, code: code, reason: reason, extra: extra})
+	#def encode_msg(%{:command => :filterload,})
+	#def encode_msg(%{:command => :tx,})
+	#def encode_msg(%{:command => :block,})
+	
+	defp decode_getheaders_or_blocks(command, << version :: binary - size(4), rest :: binary >>) do
+		{hash_count, _, b_hashes} = variable_length_integer(rest)
+		b_cocator_bytes = hash_count * 32
+		<< b_block_locators :: binary - size(b_cocator_bytes), hash_stop :: binary - size(32)>> = b_hashes
+		block_locators = for  <<h :: binary - size(32) <- b_block_locators>>, do: h
+	  %{command: command, version: :binary.decode_unsigned(version, :little), lst_blocklocator: block_locators,
+			hashstop: hash_stop}		
+	end
 	def length_and_checksum(lst) do
 		payload = :erlang.list_to_binary(lst)
 		payload_length = Nicotib.Utils.pad_to_x(:binary.encode_unsigned(byte_size(payload), :little), 4)
@@ -144,47 +162,47 @@ defmodule Nicotib.Protocol do
 	end
 
 
-	def variable_length_string(b) do
+	defp variable_length_string(b) do
 		{n, h, t} = variable_length_integer(b)
 		<< var_string :: binary - size(n), rest :: binary >> = t
 		{h, var_string, rest}
 	end
-	def string_to_variable_length(s) when is_binary(s) do
+	defp string_to_variable_length(s) when is_binary(s) do
     :erlang.list_to_binary([integer_to_variable_length(byte_size(s)), s])
 	end
-	def	string_to_variable_length(s) when is_list(s) do
+	defp	string_to_variable_length(s) when is_list(s) do
     :erlang.list_to_binary([integer_to_variable_length(length(s)), s])
 	end
 			
-	def variable_length_integer(<< f, rest :: binary >>) when f < 253 do
+	defp variable_length_integer(<< f, rest :: binary >>) when f < 253 do
 		{f, <<f>>, rest}
 	end
-	def variable_length_integer(<< f, rest :: binary >> ) do
+	defp variable_length_integer(<< f, rest :: binary >> ) do
 		variable_length_integer(f, <<rest :: binary>>)
 	end
 
-	def variable_length_integer(253, << n :: binary - size(2), rest :: binary>>) do
+	defp variable_length_integer(253, << n :: binary - size(2), rest :: binary>>) do
 		{:binary.decode_unsigned(n, :little), <<253, n :: binary>>, rest}
 	end
-	def variable_length_integer(254, << n :: binary - size(4), rest :: binary>>) do
+	defp variable_length_integer(254, << n :: binary - size(4), rest :: binary>>) do
 		{:binary.decode_unsigned(n, :little), <<254, n :: binary>>, rest}
 	end
-	def variable_length_integer(255, << n :: binary - size(8), rest :: binary>>) do
+	defp variable_length_integer(255, << n :: binary - size(8), rest :: binary>>) do
 		{:binary.decode_unsigned(n, :little), <<255, n :: binary>>, rest}
 	end
 
-	def integer_to_variable_length(i) when i<253 do
+	defp integer_to_variable_length(i) when i<253 do
     <<i>>
 	end
-	def integer_to_variable_length(i) when i<65536 do
+	defp integer_to_variable_length(i) when i<65536 do
     b = C.encpadl(i, 2)
     <<253, b :: binary>>
 	end
-	def integer_to_variable_length(i) when i<4294967296 do
+	defp integer_to_variable_length(i) when i<4294967296 do
     b = C.encpadl(i, 4)
     <<254, b :: binary>>
 	end
-	def integer_to_variable_length(i) when i<18446744073709551616 do
+	defp integer_to_variable_length(i) when i<18446744073709551616 do
     b = C.encpadl(i, 8)
     <<255, b :: binary>>
 	end		

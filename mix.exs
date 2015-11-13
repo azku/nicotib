@@ -7,7 +7,9 @@ defmodule Nicotib.Mixfile do
      elixir: "~> 1.0",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
-     deps: deps]
+     deps: deps,
+		 description: "Nicotib is an application written in Erlang which aims to provide a medium to interact with the block chain and the bitcoin network",
+		 package: package]
   end
 
   # Configuration for the OTP application
@@ -30,4 +32,10 @@ defmodule Nicotib.Mixfile do
   defp deps do
     []
   end
+	defp package do
+		[files: ["lib", "priv", "mix.ex", "README*", "LICENSE*"],
+		 mantainers: ["Asier Azkuenaga Batiz"],
+		 licenses: ["GPL v3"]
+		]
+	end
 end
