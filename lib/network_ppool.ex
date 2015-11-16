@@ -81,6 +81,11 @@ defmodule Nicotib.NetworkPpool do
 		{:noreply, %{state | :client_lst => cl ++ c_lst, :f_handshake => f_handshake, :used_nonces => Dict.put(dict, rnd, [])}}
 		
 	end
+	def handle_cast({:start_server, port}, state = %{:server_lst => s_lst, :callback_mod => callback_mod, :address_mod => address_mod}) do
+		{:ok, pid} = :ranch.start_listener(:nicotib_ranch_server, 5, :ranch_tcp, [{:port, port}],
+																			 Nicotib.NetworkSocServer, [callback_mod, address_mod])
+		{:noreply, %{state | :server_lst => [pid | s_lst]}}
+	end
 	
 	def handle_info(_, state = %{:state => :closing}) do
 		##Catch all messages when closing
