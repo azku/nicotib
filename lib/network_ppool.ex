@@ -12,8 +12,8 @@ defmodule Nicotib.NetworkPpool do
 		GenServer.cast(:network_ppool, {:open_new_client_con, n_con, f_handshake})
 	end
 
-	def count_open_connection do
-		GenServer.call(:network_ppool, :count_open_connecitons)
+	def count_open_connections do
+		GenServer.call(:network_ppool, :count_open_connections)
 	end
 
 	def start_server(port) do
